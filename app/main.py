@@ -1,11 +1,16 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from . import crud, schemas
 from .database import create_tables, get_db
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -21,6 +26,12 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
+
+@app.exception_handler(SQLAlchemyError)
+def database_unavailable(_: object, error: SQLAlchemyError) -> JSONResponse:
+    logger.error("Database request failed: %s", error.__class__.__name__)
+    return JSONResponse(status_code=503, content={"detail": "Database unavailable."})
 
 
 @app.get("/health")

@@ -1,0 +1,20 @@
+[Unit]
+Description=Notes FastAPI backend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=notesapi
+Group=notesapi
+WorkingDirectory=/opt/notes-backend
+EnvironmentFile=/etc/notes-backend/notes-backend.env
+ExecStart=/opt/notes-backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
