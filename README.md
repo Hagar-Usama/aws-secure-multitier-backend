@@ -128,3 +128,87 @@ The backend security group should permit inbound TCP 8000 only from the frontend
 
 Startup retains the demo's SQLAlchemy `create_all` call. It only creates missing tables; it is not a migration system and does not perform destructive schema operations. For a shared or production database, run reviewed migrations separately rather than treating application restarts as schema management.
 
+
+## Ubuntu 24.04 LTS deployment
+
+The backend runs as a systemd service on a private Ubuntu Server 24.04 LTS EC2 instance. PostgreSQL remains a separate private database service.
+
+The backend instance must have these prerequisites already available:
+
+- Python 3.12 at `/usr/bin/python3.12`.
+- Python virtual-environment support.
+- AWS CLI configured to use the EC2 instance IAM role.
+- A route to the S3 Gateway VPC Endpoint.
+- Permission to retrieve the deployment bundle from the designated S3 object.
+
+The deployment script does not create AWS resources or install operating-system packages. Prepare these prerequisites in the AMI or another approved provisioning process. Do not depend on a NAT Gateway.
+
+### Build the deployment bundle
+
+On an Ubuntu 24.04 build environment using Python 3.12 and the same CPU architecture as the backend instance:
+
+```bash
+chmod +x deploy/build-deployment-bundle.sh
+./deploy/build-deployment-bundle.sh deployment-bundle
+tar -C deployment-bundle -czf notes-backend-bundle.tar.gz .
+```
+
+The bundle contains the application source and prebuilt dependency wheels. The builder installs dependencies offline in a temporary environment and runs the backend tests.
+
+Upload `notes-backend-bundle.tar.gz` to a private S3 bucket using an authorized build environment. The backend EC2 role should have permission to read only the required object or prefix.
+
+### Retrieve the bundle on the backend instance
+
+Use the EC2 instance role to download the bundle through the S3 Gateway VPC Endpoint:
+
+```bash
+mkdir -p ~/notes-backend-release
+
+aws s3 cp \
+  s3://YOUR_PRIVATE_BUCKET/notes-backend/notes-backend-bundle.tar.gz \
+  ~/notes-backend-release/notes-backend-bundle.tar.gz
+
+tar -xzf ~/notes-backend-release/notes-backend-bundle.tar.gz \
+  -C ~/notes-backend-release
+
+cd ~/notes-backend-release/source
+```
+
+Replace the bucket and object path with the values used for your deployment.
+
+### Configure the database URL
+
+On the first run, the deployment script creates the protected environment file and exits:
+
+```bash
+chmod +x deploy/deploy-ubuntu.sh
+
+sudo env WHEELHOUSE="$HOME/notes-backend-release/wheels" \
+  ./deploy/deploy-ubuntu.sh
+```
+
+Edit `/etc/notes-backend/notes-backend.env` using an approved secure process. It must contain a valid `DATABASE_URL` for the private PostgreSQL endpoint. Do not commit real credentials or put secrets in shell history.
+
+For AWS, retrieve the secret through an authorized mechanism such as SSM Session Manager and AWS Secrets Manager. The EC2 instance needs the appropriate IAM permissions and network connectivity to the relevant services.
+
+After configuring the environment file, rerun the deployment command:
+
+```bash
+sudo env WHEELHOUSE="$HOME/notes-backend-release/wheels" \
+  ./deploy/deploy-ubuntu.sh
+```
+
+The script installs the application dependencies from the local wheelhouse using `pip --no-index`, installs the systemd unit, and enables the service.
+
+### Verify the service
+
+```bash
+sudo systemctl status notes-backend
+sudo journalctl -u notes-backend -n 100 --no-pager
+
+curl -i http://BACKEND_PRIVATE_DNS_OR_IP:8000/health
+```
+
+The backend security group should allow inbound TCP 8000 only from the frontend security group. Do not expose the backend or PostgreSQL to the public internet.
+
+The backend still needs Python 3.12, virtual-environment support, AWS CLI, and S3 access before deployment. The wheel bundle does not supply those operating-system prerequisites.
