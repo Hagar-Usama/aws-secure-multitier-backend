@@ -18,7 +18,8 @@ def engine_options(url: str) -> dict:
     return {"pool_pre_ping": True}
 
 
-engine = create_engine(database_url(), **engine_options(database_url()))
+configured_database_url = database_url()
+engine = create_engine(configured_database_url, **engine_options(configured_database_url))
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
