@@ -39,7 +39,7 @@ Database request failures return a generic 503 response and log only the error c
 
 Prerequisites: a private-subnet Amazon Linux 2023 backend EC2 instance, this repository present on the instance, a PostgreSQL private endpoint reachable from it, and permission to use `sudo`. This deployment creates no AWS resources and does not install PostgreSQL.
 
-Amazon Linux 2023 keeps `/usr/bin/python3` at Python 3.9; this deployment installs the separately named Python 3.12 package and does not alter the system Python. The script needs a package source for `dnf` and `pip`. In a private subnet, provide that through a prebuilt AMI, an internal package/wheel mirror, or a temporarily authorized egress path; the application itself has no ordinary public-internet dependency and does not require a NAT Gateway.
+Amazon Linux 2023 keeps `/usr/bin/python3` at Python 3.9; this deployment uses the separately named Python 3.12 runtime and does not alter the system Python. The deployment script installs Python only when `/usr/bin/python3.12` is absent. Application dependencies are always installed from a supplied wheelhouse with `pip --no-index`, never from PyPI on the backend instance.
 
 ### Configure the database environment
 
@@ -49,7 +49,7 @@ The service reads `/etc/notes-backend/notes-backend.env`, owned by `root:notesap
 DATABASE_URL=postgresql+psycopg://notes_user:REDACTED@database.private.example:5432/notes_app
 ```
 
-`deploy/notes-backend.env.example` is a placeholder only. On the first deployment run, the script creates the `notesapi` service account, installs this placeholder as the protected environment file, and exits without starting the service. Then edit it with the real value:
+`deploy/notes-backend.env.example` is a placeholder only. On the first deployment run, the script creates the `notesapi` service account, installs this placeholder as the protected environment file, and exits before Python, package, or application installation. Then edit it with the real value:
 
 ```bash
 chmod +x deploy/deploy-amazon-linux.sh
@@ -59,15 +59,50 @@ sudoedit /etc/notes-backend/notes-backend.env
 
 For AWS, store the complete `DATABASE_URL` as a Secrets Manager secret and attach an EC2 IAM role limited to `secretsmanager:GetSecretValue` for that secret. Retrieve it through an authorized operator/SSM session and write it directly to the protected environment file; do not print it, put it in shell history, or add AWS credentials to this repository. The application and deployment script intentionally do not make AWS SDK/API calls.
 
-### Deploy and operate
+### Build a private deployment bundle
 
-From the repository root on the backend instance:
+Build the bundle on Amazon Linux 2023 with Python 3.12 and the same CPU architecture as the target EC2 instance. This builder downloads only binary wheels, copies the backend source, creates a clean temporary validation environment, installs from the local wheelhouse with `--no-index`, and runs the tests:
 
 ```bash
-sudo ./deploy/deploy-amazon-linux.sh
+cd backend
+chmod +x deploy/build-deployment-bundle.sh
+./deploy/build-deployment-bundle.sh deployment-bundle
+tar -C deployment-bundle -czf notes-backend-bundle.tar.gz .
 ```
 
-This second run installs the systemd unit and enables/restarts it. The script installs Python 3.12, creates the unprivileged `notesapi` account, deploys only application code and dependencies under `/opt/notes-backend`, validates the protected environment file, and manages its own service unit. Rerunning it updates only that application directory and its own service unit; it does not reset PostgreSQL or modify unrelated services.
+Do not build the bundle on an incompatible operating system or CPU architecture. Upload `notes-backend-bundle.tar.gz` to a private S3 bucket from the build environment.
+
+### Retrieve and deploy without a NAT Gateway
+
+Give the backend EC2 instance an IAM role limited to `s3:GetObject` for the deployment-bundle object and use an S3 Gateway VPC Endpoint with an endpoint policy limited to that bucket/prefix. No AWS keys are placed in the application, script, or environment file. On the instance, retrieve and extract the bundle using the instance role:
+
+```bash
+mkdir -p ~/notes-backend-release
+aws s3 cp s3://YOUR_PRIVATE_BUCKET/notes-backend/notes-backend-bundle.tar.gz \
+  ~/notes-backend-release/notes-backend-bundle.tar.gz
+tar -xzf ~/notes-backend-release/notes-backend-bundle.tar.gz -C ~/notes-backend-release
+cd ~/notes-backend-release/source
+```
+
+The `aws` command uses the EC2 role; it must already be installed (or included in a prebuilt AMI). The source and wheel bundle cross only the S3 Gateway Endpoint, not the public internet.
+
+On the first run, provide the wheel directory but expect an early exit after the placeholder environment file is created:
+
+```bash
+chmod +x deploy/deploy-amazon-linux.sh
+sudo WHEELHOUSE="$PWD/../wheels" ./deploy/deploy-amazon-linux.sh
+sudoedit /etc/notes-backend/notes-backend.env
+```
+
+After securely setting the real `DATABASE_URL`, run the same command again:
+
+```bash
+sudo WHEELHOUSE="$PWD/../wheels" ./deploy/deploy-amazon-linux.sh
+```
+
+The second run validates `DATABASE_URL` and `WHEELHOUSE` before it installs Python or application dependencies, then installs the systemd unit and enables/restarts it. Rerunning it updates only that application directory and its own service unit; it does not reset PostgreSQL or modify unrelated services.
+
+Remaining package-source requirements are explicit: if Python 3.12 is not baked into the AMI, `dnf install python3.12 python3.12-pip` needs an approved Amazon Linux RPM source. The `aws` CLI must also already be present or installed from an approved source. The wheel bundle removes the need for backend access to PyPI, but this procedure is not fully offline unless Python 3.12 and the AWS CLI are already present on the image.
 
 Manage and inspect the service:
 
