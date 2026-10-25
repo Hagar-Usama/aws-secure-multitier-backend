@@ -8,10 +8,9 @@ From this directory, after PostgreSQL has started from the parent project:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 export DATABASE_URL='postgresql+psycopg://notes_user:YOUR_POSTGRES_PASSWORD@127.0.0.1:5432/notes_app'
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Set `YOUR_POSTGRES_PASSWORD` to the value in the parent `.env`. `DATABASE_URL` is required and must not be hardcoded or committed. `backend/.env.example` shows the expected host-run URL, but Uvicorn requires the value to be exported or loaded into the environment.
@@ -29,9 +28,9 @@ Open <http://127.0.0.1:8000/docs> for the interactive schema.
 
 ## Tests
 
-With the virtual environment active:
+Using the virtual environment directly:
 
 ```bash
-pytest
+.venv/bin/python -m pytest
 ```
 
