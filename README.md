@@ -9,11 +9,14 @@ From this directory, after PostgreSQL has started from the parent project:
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-export DATABASE_URL='postgresql+psycopg://notes_user:YOUR_POSTGRES_PASSWORD@127.0.0.1:5432/notes_app'
+set -a
+. ../.env
+set +a
+export DATABASE_URL="$(.venv/bin/python -c 'import os; from urllib.parse import quote; print("postgresql+psycopg://{}:{}@127.0.0.1:{}/{}".format(quote(os.environ["POSTGRES_USER"], safe=""), quote(os.environ["POSTGRES_PASSWORD"], safe=""), os.environ["POSTGRES_PORT"], quote(os.environ["POSTGRES_DB"], safe="")))')"
 .venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Set `YOUR_POSTGRES_PASSWORD` to the value in the parent `.env`. `DATABASE_URL` is required and must not be hardcoded or committed. `backend/.env.example` shows the expected host-run URL, but Uvicorn requires the value to be exported or loaded into the environment.
+This derives `DATABASE_URL` from the parent `.env` without printing the password, including URL encoding for special characters. `DATABASE_URL` is required and must not be hardcoded or committed. In AWS, store the complete URL in Secrets Manager and inject it into the backend as `DATABASE_URL`.
 
 For a future backend container on the Compose network, use `postgres` instead of `127.0.0.1` as the hostname.
 
